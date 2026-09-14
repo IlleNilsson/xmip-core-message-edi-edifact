@@ -60,7 +60,7 @@ impl Shape for Edifact {
     fn shape(&self, stream: &Stream) -> Result<Shaped, ShapeError> {
         let delimiters = delimiters(stream.bytes())?;
         let segments = segment::segments(stream.bytes(), &delimiters)
-            .map_err(|stop| stop.refused("edi-edifact"))?;
+            .map_err(|stop| ShapeError::refused("edi-edifact", stop))?;
         let message_type = segment::first(&segments, "UNH")
             .and_then(|unh| unh.component(1, 0, &delimiters))
             .filter(|kind| !kind.is_empty())
