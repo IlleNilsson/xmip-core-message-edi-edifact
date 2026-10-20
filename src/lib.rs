@@ -53,7 +53,7 @@ impl Shape for Edifact {
         &["application/edifact"]
     }
 
-    fn recognises(&self, bytes: &[u8]) -> bool {
+    fn recognizes(&self, bytes: &[u8]) -> bool {
         bytes.starts_with(b"UNA") || bytes.starts_with(b"UNB")
     }
 
@@ -155,13 +155,13 @@ UNT+4+1'\r\nUNZ+1+1'\r\n";
     }
 
     #[test]
-    fn the_shape_claims_edifact_and_recognises_una_or_unb_at_the_head() {
+    fn the_shape_claims_edifact_and_recognizes_una_or_unb_at_the_head() {
         assert_eq!(Edifact.technology(), "edi-edifact");
         assert_eq!(Edifact.media_types(), &["application/edifact"]);
-        assert!(Edifact.recognises(b"UNA:+.? 'UNB"));
-        assert!(Edifact.recognises(b"UNB+UNOA:2"));
-        assert!(!Edifact.recognises(b"ISA*00*"));
-        assert!(!Edifact.recognises(b""));
+        assert!(Edifact.recognizes(b"UNA:+.? 'UNB"));
+        assert!(Edifact.recognizes(b"UNB+UNOA:2"));
+        assert!(!Edifact.recognizes(b"ISA*00*"));
+        assert!(!Edifact.recognizes(b""));
 
         let shapes: [&dyn Shape; 1] = [&Edifact];
         let by_media = message::choose(&shapes, &stream(b"x", Some("Application/EDIFACT")));
