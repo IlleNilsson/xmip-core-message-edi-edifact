@@ -64,7 +64,7 @@ impl Shape for Edifact {
         let message_type = segment::first(&segments, "UNH")
             .and_then(|unh| unh.component(1, 0, &delimiters))
             .filter(|kind| !kind.is_empty())
-            .map(|kind| String::from_utf8_lossy(&delimiters.unreleased(kind)).into_owned());
+            .map(|kind| String::from_utf8_lossy_owned(delimiters.unreleased(kind)));
         let media = stream.media_type().unwrap_or("application/edifact");
         Ok(Shaped {
             parts: segment::parts(&segments, media),
