@@ -58,8 +58,9 @@ impl Shape for Edifact {
     }
 
     fn shape(&self, stream: &Stream) -> Result<Shaped, ShapeError> {
-        let delimiters = delimiters(stream.bytes())?;
-        let segments = segment::segments(stream.bytes(), &delimiters)
+        let bytes = message::loaded(self.technology(), stream)?;
+        let delimiters = delimiters(bytes)?;
+        let segments = segment::segments(bytes, &delimiters)
             .map_err(|stop| ShapeError::refused("edi-edifact", stop))?;
         let message_type = segment::first(&segments, "UNH")
             .and_then(|unh| unh.component(1, 0, &delimiters))
@@ -164,10 +165,15 @@ UNT+4+1'\r\nUNZ+1+1'\r\n";
         assert!(!Edifact.recognizes(b""));
 
         let shapes: [&dyn Shape; 1] = [&Edifact];
-        let by_media = message::choose(&shapes, &stream(b"x", Some("Application/EDIFACT")));
+        let by_media =
+            message::choose(&shapes, &stream(b"x", Some("Application/EDIFACT"))).expect("held");
         assert_eq!(by_media.map(Shape::technology), Some("edi-edifact"));
-        let by_look = message::choose(&shapes, &stream(ORDERS, None));
+        let by_look = message::choose(&shapes, &stream(ORDERS, None)).expect("held");
         assert_eq!(by_look.map(Shape::technology), Some("edi-edifact"));
-        assert!(message::choose(&shapes, &stream(b"MSH|", None)).is_none());
+        assert!(
+            message::choose(&shapes, &stream(b"MSH|", None))
+                .expect("held")
+                .is_none()
+        );
     }
 }
