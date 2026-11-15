@@ -7,7 +7,7 @@ version = "0.1.0"
 edition = "2024"
 license = "AGPL-3.0-or-later"
 repository = "https://github.com/IlleNilsson/xmip-core-message-edi-edifact"
-description = "UN/EDIFACT shape: an interchange as segments named by their tag, the first UNH message type as the announced type. A xmip-core-message technology."
+description = "UN/EDIFACT shape: an interchange as segments named by their tag, the first UNH message type as the announced type; the one reader of the UNA, which the EDIFACT contract reads an interchange's head by. A xmip-core-message technology."
 publish = false
 
 [lib]

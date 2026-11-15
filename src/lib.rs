@@ -10,6 +10,8 @@
 //!
 //! The walk is the Foundation's `message::segment`: this shape brings the
 //! delimiters and reads one segment. A contract checks everything else.
+//! The `UNA` is read here once ([`advice`]), and the EDIFACT contract reads
+//! an interchange's head by it too (ADR-0044, amendment 2026-11-15).
 
 use message::segment::{self, Delimiters};
 use message::{Shape, ShapeError, Shaped};
@@ -22,25 +24,54 @@ pub struct Edifact;
 /// The delimiters an interchange has when it announces none: `:+.? '`.
 pub const DEFAULT: Delimiters = Delimiters::new(b'\'', b'+', b':').with_release(b'?');
 
-/// The delimiters the `UNA` announces — component, element, decimal mark,
-/// release, reserved, terminator — else the default.
+/// The length of a `UNA`: its tag and the six service characters it
+/// advises.
+pub const UNA_LENGTH: usize = 9;
+
+/// What the head of an interchange advises: the delimiters in force, and
+/// the `UNA` that advised them where there is one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Advice<'a> {
+    pub delimiters: Delimiters,
+    /// The `UNA` as it is written, its [`UNA_LENGTH`] bytes; none where the
+    /// interchange opens without one.
+    pub una: Option<&'a [u8]>,
+}
+
+/// The service characters the `UNA` at the head of `bytes` advises —
+/// component, element, decimal mark, release, reserved, terminator — else
+/// the default set. A space advised as the release character is none, as
+/// ISO 9735 syntax 3 says (*if not used, insert space character*). The
+/// walk reads bytes, so every service character is ASCII.
 ///
 /// # Errors
-/// A `UNA` shorter than its nine characters.
-pub fn delimiters(bytes: &[u8]) -> Result<Delimiters, ShapeError> {
+/// A `UNA` shorter than its nine characters, or one with a service
+/// character outside ASCII.
+pub fn advice(bytes: &[u8]) -> Result<Advice<'_>, ShapeError> {
     if !bytes.starts_with(b"UNA") {
-        return Ok(DEFAULT);
+        return Ok(Advice {
+            delimiters: DEFAULT,
+            una: None,
+        });
     }
-    let Some(advice) = bytes.get(3..9) else {
+    let Some(una) = bytes.get(..UNA_LENGTH) else {
         return Err(
             ShapeError::new("edi-edifact", "a UNA shorter than its nine characters")
                 .at(bytes.len()),
         );
     };
-    let announced = Delimiters::new(advice[5], advice[1], advice[0]);
-    Ok(match advice[3] {
+    if let Some(at) = una.iter().position(|byte| !byte.is_ascii()) {
+        let reason = "a UNA with a service character outside ASCII";
+        return Err(ShapeError::new("edi-edifact", reason).at(at));
+    }
+    let announced = Delimiters::new(una[8], una[4], una[3]);
+    let delimiters = match una[6] {
         b' ' => announced,
         release => announced.with_release(release),
+    };
+    Ok(Advice {
+        delimiters,
+        una: Some(una),
     })
 }
 
@@ -59,7 +90,7 @@ impl Shape for Edifact {
 
     fn shape(&self, stream: &Stream) -> Result<Shaped, ShapeError> {
         let bytes = message::loaded(self.technology(), stream)?;
-        let delimiters = delimiters(bytes)?;
+        let delimiters = advice(bytes)?.delimiters;
         let segments = segment::segments(bytes, &delimiters)
             .map_err(|stop| ShapeError::refused("edi-edifact", stop))?;
         let message_type = segment::first(&segments, "UNH")
@@ -124,15 +155,33 @@ UNT+4+1'\r\nUNZ+1+1'\r\n";
         assert_eq!(shaped.parts.len(), 4);
         assert_eq!(shaped.parts[2].name.as_deref(), Some("UNH"));
         assert_eq!(shaped.message_type.as_deref(), Some("INVOIC"));
-        assert_eq!(delimiters(other).map(|d| d.release), Ok(Some(b'!')));
-        assert_eq!(delimiters(b"UNA:+.  'UNB").map(|d| d.release), Ok(None));
+        let advised = advice(other).expect("advised");
+        assert_eq!(advised.delimiters.release, Some(b'!'));
+        assert_eq!(advised.una, Some(&other[..UNA_LENGTH]));
 
         let plain = Edifact
             .shape(&stream(b"UNB+UNOA:2+S+R+240101:1200+1'UNZ+0+1'", None))
             .expect("defaults");
         assert_eq!(plain.parts.len(), 2);
         assert_eq!(plain.message_type, None);
-        assert_eq!(delimiters(b"UNB+"), Ok(DEFAULT));
+        let default = Advice {
+            delimiters: DEFAULT,
+            una: None,
+        };
+        assert_eq!(advice(b"UNB+"), Ok(default));
+    }
+
+    /// A space in UNA4 is no release character (ISO 9735 syntax 3: *if not
+    /// used, insert space character*): `?` is then a character like any.
+    #[test]
+    fn a_space_advised_as_the_release_character_is_none() {
+        let unreleased = b"UNA:+.  'UNB+UNOC:3+S+R'FTX+AAI+++Why? Because'UNZ+0+R'";
+        assert_eq!(advice(unreleased).map(|a| a.delimiters.release), Ok(None));
+        let shaped = Edifact
+            .shape(&stream(unreleased, None))
+            .expect("well-formed");
+        assert_eq!(shaped.parts[2].bytes, b"FTX+AAI+++Why? Because");
+        assert_eq!(shaped.parts.len(), 4);
     }
 
     #[test]
@@ -143,6 +192,11 @@ UNT+4+1'\r\nUNZ+1+1'\r\n";
             short.to_string(),
             "edi-edifact: a UNA shorter than its nine characters at byte 6"
         );
+        let wide = Edifact
+            .shape(&stream("UNA:+.? \u{e9}UNB+1\u{e9}".as_bytes(), None))
+            .expect_err("outside ASCII");
+        assert_eq!(wide.offset, Some(8));
+        assert_eq!(wide.reason, "a UNA with a service character outside ASCII");
 
         let cut = Edifact
             .shape(&stream(b"UNB+UNOA:2+S+R'UNH+1+ORDERS:D", None))
